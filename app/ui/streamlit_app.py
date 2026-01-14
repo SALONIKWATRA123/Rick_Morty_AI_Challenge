@@ -46,23 +46,38 @@ def main() -> None:
     st.caption(f"Type: {location.get('type', '—')} | Dimension: {location.get('dimension', '—')}")
 
     if st.button("Generate AI Summary"):
-        # Gather all character details and their top 3 notes
+        # Gather all character details and all notes, but use only top 3 relevant notes for LLM context
         residents = []
         for resident_url in location["residents"]:
             character = client.get_character_by_url(resident_url)
-            notes = notes_repo.get_notes(character["id"], limit=3)
+            all_notes = notes_repo.get_notes(character["id"], limit=1000)  # get all notes
+            # Use top 3 relevant notes for context
+            relevant_notes = llm.get_top_relevant_notes(character["id"], character["name"], threshold=0.5, top_k=3)
             residents.append({
                 "character": character,
-                "notes": [n for n, _ in notes]
+                "notes": relevant_notes
             })
         summary = llm.generate_location_summary(location, residents)
-        scores = evaluator.evaluate(summary, location)
+        # Use the location dict as source text for semantic similarity
+        source_text = str(location)
+        scores = evaluator.compare_evaluations(summary, location, source_text)
 
         st.subheader("AI Summary")
         st.write(summary)
 
-        st.subheader("Evaluation")
-        st.json(scores)
+        st.subheader("Evaluation Comparison")
+        cols = st.columns(3)
+        methods = ["Rule-Based", "Semantic Similarity", "LLM Judge"]
+        results = [scores["rule_based"], scores["semantic_similarity"], scores["llm_judge"]]
+
+        for col, method, result in zip(cols, methods, results):
+            col.markdown(f"### {method}")
+            col.metric("Factual", result["factual"])
+            col.metric("Creativity", result["creativity"])
+            col.metric("Completeness", result["completeness"])
+            col.metric("Final Score", result["final_score"])
+            if "similarity" in result:
+                col.write(f"Similarity: {result['similarity']:.2f}")
 
     st.subheader("Residents")
 
@@ -90,9 +105,9 @@ def main() -> None:
             if st.button("Save Note", key=f"save_{character['id']}"):
                 notes_repo.add_note(character["id"], note)
 
-            st.caption("Showing only the latest 3 notes")
-            notes = notes_repo.get_notes(character["id"], limit=3)
-            for n, ts in notes:
+            st.caption("All notes for this character")
+            all_notes = notes_repo.get_notes(character["id"], limit=1000)
+            for n, ts in all_notes:
                 st.write(f"📝 {n} ({ts})")
 
 
