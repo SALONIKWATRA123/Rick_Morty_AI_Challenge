@@ -17,6 +17,14 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class LLMService:
 
+    def generate_judge_verdict(self, prompt):
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        return response.choices[0].message.content.strip()
+
     def generate_location_summary(self, location, residents):
         prompt = f"""
 You are a Rick & Morty narrator.
