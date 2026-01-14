@@ -1,4 +1,17 @@
-"""Streamlit UI entrypoint for Rick & Morty AI Explorer."""
+"""
+Rick & Morty AI Explorer - Streamlit UI
+
+This file is the main user interface for the Rick & Morty AI Challenge app.
+It lets users:
+  - Select a location from the Rick & Morty universe
+  - View and add notes for each character
+  - Generate and evaluate AI summaries for locations
+  - Use AI-powered semantic search to find characters (using all details and notes)
+  - See LLM-based judging and scoring
+
+All backend logic (API, embeddings, LLM, evaluation, persistence) is abstracted away.
+This file focuses on user interaction, display, and workflow.
+"""
 
 from __future__ import annotations
 
@@ -20,13 +33,14 @@ from app.llm.embeddings import EmbeddingService
 
 
 def main() -> None:
-
+    # Initialize service objects for API, notes, LLM, evaluation, and embeddings
     client = RickMortyClient()
     notes_repo = NotesRepository()
     llm = LLMService()
     evaluator = Evaluator()
     embedding_service = EmbeddingService()
 
+    # Load all locations from the API (with error handling)
     try:
         locations = client.get_all_locations()
     except Exception as e:
@@ -37,7 +51,7 @@ def main() -> None:
         )
         st.stop()
 
-    # --- Simple selectbox-based location selection ---
+    # --- Location selection UI ---
     location_names = [loc["name"] for loc in locations]
     selected_name = st.selectbox("Select Location", location_names)
     location = next((l for l in locations if l["name"] == selected_name), None)
@@ -45,15 +59,15 @@ def main() -> None:
         st.warning("No location selected. Please select a location above.")
         st.stop()
 
-    # All code using 'location' must come after this check
+    # Show location type and dimension
     st.caption(f"Type: {location.get('type', '—')} | Dimension: {location.get('dimension', '—')}")
 
-    # --- Collect all character details and all notes per character ---
+    # --- Gather all character details and notes for the selected location ---
     residents = []
     all_notes = []
     for resident_url in location["residents"]:
         character = client.get_character_by_url(resident_url)
-        # Get ALL notes for this character (not just 3)
+        # Get all notes for this character
         notes = notes_repo.get_notes(character["id"])
         note_texts = [n for n, _ in notes]
         all_notes.extend(note_texts)
@@ -150,8 +164,8 @@ You are an expert judge for Rick & Morty summaries. Here is the source informati
         st.session_state['char_search_triggered'] = True
     # Only search if triggered and text is not empty
     if st.session_state['char_search_triggered'] and st.session_state['char_search_text']:
+        # Embed the query and all character details+notes, then rank by similarity
         char_query_emb = embedding_service.embed(st.session_state['char_search_text'])
-        # Prepare a single corpus per character: all details + all notes
         char_items = []  # (character, full_text)
         for resident_url in location["residents"]:
             character = client.get_character_by_url(resident_url)
@@ -159,17 +173,21 @@ You are an expert judge for Rick & Morty summaries. Here is the source informati
             notes_text = "; ".join([n for n, _ in notes])
             char_details = f"Name: {character.get('name', '-')}; Status: {character.get('status', '-')}; Species: {character.get('species', '-')}; Gender: {character.get('gender', '-')}; Origin: {(character.get('origin') or {}).get('name', '-')}; Current location: {(character.get('location') or {}).get('name', '-')}; Episodes: {len(character.get('episode') or [])}; Notes: {notes_text}"
             char_items.append((character, char_details))
-        # Embeddings for characters (details + notes)
         char_corpus = [full_text for _, full_text in char_items]
         char_embs = [embedding_service.embed(text) for text in char_corpus]
         import numpy as np
         char_sims = [embedding_service.cosine_similarity(char_query_emb, emb) for emb in char_embs]
-        # Top results
-        top_char_idx = np.argsort(char_sims)[::-1][:5]
+        # Set a minimum similarity threshold
+        SIM_THRESHOLD = 0.3
+        # Show top 5 most similar characters above threshold
+        top_char_idx = [i for i in np.argsort(char_sims)[::-1] if char_sims[i] >= SIM_THRESHOLD][:5]
         st.markdown("#### Top Matching Characters (Details + Notes):")
-        for idx in top_char_idx:
-            character, full_text = char_items[idx]
-            st.write(f"**{character.get('name', '-')}** — {full_text}")
+        if not top_char_idx:
+            st.info("No relevant characters found for your search.")
+        else:
+            for idx in top_char_idx:
+                character, full_text = char_items[idx]
+                st.write(f"**{character.get('name', '-')}** — {full_text}")
 
     # Always show Residents section for the selected location
     st.subheader("Residents")
