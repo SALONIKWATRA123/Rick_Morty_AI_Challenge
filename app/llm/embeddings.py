@@ -10,8 +10,9 @@ class EmbeddingService:
         # openai>=1.0.0 embedding API
         response = openai.embeddings.create(
             model="text-embedding-3-small",
-            input=[text]
+            input=text
         )
+        # response.data is a list of objects with 'embedding' key
         return np.array(response.data[0].embedding)
 
     def cosine_similarity(self, a, b):

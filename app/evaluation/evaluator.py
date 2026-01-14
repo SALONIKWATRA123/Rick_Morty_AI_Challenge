@@ -1,79 +1,73 @@
-"""Evaluation helpers."""
 
-
+from app.llm.embeddings import EmbeddingService
+import numpy as np
 
 class Evaluator:
-    def rule_based_evaluate(self, summary, location):
-        """Rule-based evaluation (original logic)."""
-        factual = 5 if location["name"] in summary else 3
-        creativity = min(5, max(3, len(summary) // 200))
-        completeness = 5 if str(len(location["residents"])) in summary else 3
-        final_score = (
-            factual * 0.4 +
-            creativity * 0.3 +
-            completeness * 0.3
-        )
-        return {
-            "factual": factual,
-            "creativity": creativity,
-            "completeness": completeness,
-            "final_score": round(final_score, 2)
+    def __init__(self):
+        self.embedding_service = EmbeddingService()
+
+    def score_factual(self, summary, location):
+        # Simple heuristic: location name and resident names present
+        score = 3
+        if location["name"] in summary:
+            score += 1
+        if location.get("residents"):
+            covered = sum(1 for r in location["residents"] if r in summary)
+            if covered > 0:
+                score += 1
+        return min(score, 5)
+
+    def score_creativity(self, summary):
+        # Heuristic: variance in sentence length
+        sentences = [s.strip() for s in summary.split('.') if s.strip()]
+        if not sentences:
+            return 3
+        lengths = [len(s.split()) for s in sentences]
+        variance = np.var(lengths)
+        return min(5, max(3, int(3 + variance // 5)))
+
+    def score_completeness(self, summary, location):
+        # Heuristic: mentions of all key facts
+        score = 3
+        if location.get("type") and location["type"] in summary:
+            score += 1
+        if location.get("dimension") and location["dimension"] in summary:
+            score += 1
+        return min(score, 5)
+
+    def semantic_similarity(self, summary, residents):
+        # Embedding-based similarity between summary and all character details for the location (no notes)
+        if not residents:
+            return 0.0
+        # Concatenate all character details (name, status, species, gender, origin, location, episodes)
+        details = []
+        for r in residents:
+            c = r["character"]
+            details.append(
+                f"Name: {c.get('name', '-')}, Status: {c.get('status', '-')}, Species: {c.get('species', '-')}, "
+                f"Gender: {c.get('gender', '-')}, Origin: {(c.get('origin') or {}).get('name', '-')}, "
+                f"Current location: {(c.get('location') or {}).get('name', '-')}, Episodes: {len(c.get('episode') or [])}"
+            )
+        all_details = " ".join(details)
+        emb1 = self.embedding_service.embed(summary)
+        emb2 = self.embedding_service.embed(all_details)
+        return float(self.embedding_service.cosine_similarity(emb1, emb2))
+
+    def rubric_evaluation(self, summary, location):
+        # Prompt-based rubric (simple heuristic)
+        rubric = {
+            "factual": self.score_factual(summary, location),
+            "creativity": self.score_creativity(summary),
+            "completeness": self.score_completeness(summary, location)
         }
-
-    def semantic_similarity_evaluate(self, summary, source_text):
-        """Semantic similarity between summary and source text using embeddings."""
-        from app.llm.embeddings import EmbeddingService
-        embedding_service = EmbeddingService()
-        summary_emb = embedding_service.embed(summary)
-        source_emb = embedding_service.embed(source_text)
-        similarity = embedding_service.cosine_similarity(summary_emb, source_emb)
-        # Map similarity to a 1-5 scale for each metric (simple mapping)
-        score = int(1 + 4 * similarity)
-        return {
-            "factual": score,
-            "creativity": score,
-            "completeness": score,
-            "similarity": similarity,
-            "final_score": round(score, 2)
-        }
-
-    def llm_judge_evaluate(self, summary, location):
-        """Use LLM as a judge to score factual, creativity, completeness."""
-        from app.llm.llm_service import LLMService
-        llm = LLMService()
-        prompt = f"""
-You are an expert evaluator. Given the following location data and a summary, rate the summary on a scale of 1-5 for factual accuracy, creativity, and completeness. Return a JSON object with keys: factual, creativity, completeness.
-
-Location: {location}
-Summary: {summary}
-"""
-        import openai
-        response = openai.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.2
+        rubric["final_score"] = round(
+            rubric["factual"] * 0.4 + rubric["creativity"] * 0.3 + rubric["completeness"] * 0.3, 2
         )
-        import json
-        try:
-            scores = json.loads(response.choices[0].message.content)
-        except Exception:
-            # fallback if LLM output is not valid JSON
-            scores = {"factual": 3, "creativity": 3, "completeness": 3}
-        final_score = (
-            scores.get("factual", 3) * 0.4 +
-            scores.get("creativity", 3) * 0.3 +
-            scores.get("completeness", 3) * 0.3
-        )
-        scores["final_score"] = round(final_score, 2)
-        return scores
+        return rubric
 
-    def compare_evaluations(self, summary, location, source_text):
-        """Run all three evaluation techniques and compare results."""
-        rule = self.rule_based_evaluate(summary, location)
-        semantic = self.semantic_similarity_evaluate(summary, source_text)
-        llm = self.llm_judge_evaluate(summary, location)
-        return {
-            "rule_based": rule,
-            "semantic_similarity": semantic,
-            "llm_judge": llm
-        }
+    def evaluate(self, summary, location, residents=None):
+        # Modular evaluation: rubric + semantic similarity
+        rubric = self.rubric_evaluation(summary, location)
+        sim = self.semantic_similarity(summary, residents or [])
+        rubric["semantic_similarity"] = round(sim, 3)
+        return rubric

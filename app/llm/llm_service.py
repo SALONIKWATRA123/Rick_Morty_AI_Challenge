@@ -17,41 +17,13 @@ openai.api_key = os.getenv("OPENAI_API_KEY")
 
 class LLMService:
 
-    def get_top_relevant_notes(self, character_id, source, threshold=0.75, top_k=3):
-        """
-        Retrieve the top-k most semantically relevant notes for a character, given a source string.
-        Only notes with similarity above the threshold are returned.
-        """
-        from app.persistence.notes_repository import NotesRepository
-        from app.llm.embeddings import EmbeddingService
-
-        notes_repo = NotesRepository()
-        embedding_service = EmbeddingService()
-
-        # Get all notes for the character (not just the latest 3)
-        import sqlite3
-        DB_PATH = "db/notes.db"
-        with sqlite3.connect(DB_PATH) as conn:
-            cursor = conn.execute(
-                "SELECT note FROM character_notes WHERE character_id = ?",
-                (character_id,)
-            )
-            notes = [row[0] for row in cursor.fetchall()]
-
-        if not notes:
-            return []
-
-        source_emb = embedding_service.embed(source)
-        note_sims = []
-        for note in notes:
-            note_emb = embedding_service.embed(note)
-            sim = embedding_service.cosine_similarity(source_emb, note_emb)
-            note_sims.append((note, sim))
-
-        # Filter by threshold and sort by similarity
-        filtered = [n for n in note_sims if n[1] >= threshold]
-        filtered.sort(key=lambda x: x[1], reverse=True)
-        return [n[0] for n in filtered[:top_k]]
+    def generate_judge_verdict(self, prompt):
+        response = openai.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.7
+        )
+        return response.choices[0].message.content.strip()
 
     def generate_location_summary(self, location, residents):
         prompt = f"""
@@ -77,7 +49,7 @@ Residents:
         prompt += "\n\nGenerate a humorous but informative summary."
 
         response = openai.chat.completions.create(
-            model="gpt-4o-mini",
+            model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.8
         )
