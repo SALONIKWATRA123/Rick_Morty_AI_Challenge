@@ -38,7 +38,6 @@ pip install -r requirements.txt
 ```
 OPENAI_API_KEY=your_openai_api_key_here
 ```
-- You can get an API key from https://platform.openai.com/account/api-keys
 
 ### 5. Initialize the Notes Database
 - The app will auto-create the SQLite database (`db/notes.db`) on first run.
